@@ -20,12 +20,10 @@ repositories {
 }
 
 dependencies {
-    implementation 'org.springframework.boot:spring-boot-starter-thymeleaf'
     implementation 'org.springframework.boot:spring-boot-starter-validation'
     implementation 'org.springframework.boot:spring-boot-starter-webmvc'
     implementation 'org.jetbrains.kotlin:kotlin-reflect'
     implementation 'tools.jackson.module:jackson-module-kotlin'
-    testImplementation 'org.springframework.boot:spring-boot-starter-thymeleaf-test'
     testImplementation 'org.springframework.boot:spring-boot-starter-validation-test'
     testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
     testImplementation 'org.jetbrains.kotlin:kotlin-test-junit5'
@@ -40,4 +38,44 @@ kotlin {
 
 tasks.named('test') {
     useJUnitPlatform()
+}
+
+def frontendDev = providers.gradleProperty('frontendDev').isPresent()
+def frontendDirectory = layout.projectDirectory.dir('frontend')
+
+tasks.register('frontendInstall', Exec) {
+    workingDir frontendDirectory
+    commandLine 'npm', 'ci', '--no-audit', '--no-fund'
+    inputs.files(frontendDirectory.file('package.json'), frontendDirectory.file('package-lock.json'))
+    outputs.dir(frontendDirectory.dir('node_modules'))
+}
+
+tasks.register('frontendBuild', Exec) {
+    dependsOn 'frontendInstall'
+    workingDir frontendDirectory
+    commandLine 'npm', 'run', 'build'
+    inputs.files(fileTree('frontend/src'), frontendDirectory.file('package.json'),
+            frontendDirectory.file('package-lock.json'), frontendDirectory.file('vite.config.ts'),
+            frontendDirectory.file('tsconfig.json'))
+    outputs.dir(frontendDirectory.dir('dist'))
+}
+
+tasks.register('frontendResources', Sync) {
+    dependsOn 'frontendBuild'
+    from(frontendDirectory.dir('dist/assets')) { into 'static/assets' }
+    from(frontendDirectory.file('dist/.vite/manifest.json')) { into 'web' }
+    into layout.buildDirectory.dir('generated/frontend')
+}
+
+tasks.named('processResources') {
+    if (!frontendDev) {
+        dependsOn 'frontendResources'
+        from(layout.buildDirectory.dir('generated/frontend'))
+    }
+}
+
+tasks.named('bootRun') {
+    if (frontendDev) {
+        systemProperty 'app.frontend.dev', 'true'
+    }
 }
