@@ -1,0 +1,92 @@
+:root {
+    color-scheme: light;
+    font-family: system-ui, sans-serif;
+    color: #172033;
+    background: #f3f6fb;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    padding: 1.5rem;
+    line-height: 1.6;
+}
+
+.card {
+    width: 100%;
+    max-width: 32rem;
+    padding: clamp(1.5rem, 5vw, 3rem);
+    background: #fff;
+    border: 1px solid #dce3ed;
+    border-radius: 1rem;
+    box-shadow: 0 1rem 3rem rgb(23 32 51 / 6%);
+}
+
+.eyebrow {
+    margin: 0;
+    color: #465674;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+}
+
+h1 {
+    margin: 0.75rem 0 1.5rem;
+    font-size: clamp(1.75rem, 5vw, 2.5rem);
+    line-height: 1.2;
+}
+
+.greeting {
+    font-size: 1.25rem;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+}
+
+form {
+    display: grid;
+    gap: 0.75rem;
+    margin-top: 1.5rem;
+}
+
+label {
+    font-weight: 600;
+}
+
+input,
+button {
+    width: 100%;
+    padding: 0.75rem 1rem;
+    border-radius: 0.5rem;
+    font: inherit;
+}
+
+input {
+    min-width: 0;
+    border: 1px solid #8390a7;
+    background: #fff;
+    color: inherit;
+}
+
+button {
+    border: 0;
+    background: #244ed8;
+    color: #fff;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+button:hover {
+    background: #193bad;
+}
+
+input:focus-visible,
+button:focus-visible {
+    outline: 3px solid #244ed8;
+    outline-offset: 3px;
+}
