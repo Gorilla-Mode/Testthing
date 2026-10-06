@@ -1,13 +1,15 @@
-import 'vite/modulepreload-polyfill';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { App } from './App';
-import type { MapPageViewModel } from './models';
+import { App } from './app/App';
+import { loadMap } from './features/points/api';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import './style.css';
+import './app/styles.css';
 
 const root = document.getElementById('root');
-const data = document.getElementById('app-data');
-if (!root || !data?.textContent) throw new Error('The server did not provide the initial map view model.');
-const initialModel = JSON.parse(data.textContent) as MapPageViewModel;
-createRoot(root).render(<StrictMode><App initialModel={initialModel} /></StrictMode>);
+if (!root) throw new Error('The page is missing the React root.');
+const appRoot = createRoot(root);
+appRoot.render(<p className="startup-message" role="status">Loading map…</p>);
+loadMap().then(
+  initialModel => appRoot.render(<StrictMode><App initialModel={initialModel} /></StrictMode>),
+  () => appRoot.render(<p className="startup-message" role="alert">The map could not be loaded. Please reload.</p>),
+);

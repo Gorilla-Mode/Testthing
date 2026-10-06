@@ -8,4 +8,4 @@ Object.defineProperty(HTMLDialogElement.prototype, 'showModal', {
 Object.defineProperty(HTMLDialogElement.prototype, 'close', {
   value() { this.removeAttribute('open'); }, configurable: true,
 });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); document.body.replaceChildren(); vi.unstubAllGlobals(); });

@@ -10,7 +10,6 @@ data class PointViewModel(
     val id: String,
     val name: String,
     val coordinate: Coordinate,
-    val coordinateLabel: String,
 )
 
 data class MapConfigurationViewModel(
@@ -26,8 +25,9 @@ data class MapPageViewModel(
     val points: List<PointViewModel>,
 )
 
-data class CoordinateInput(val latitude: Double? = null, val longitude: Double? = null)
+data class CreatePointRequest(
+    val name: String,
+    val coordinate: Coordinate,
+)
 
-data class CreatePointRequest(val name: String? = null, val coordinate: CoordinateInput? = null)
-
-data class InputError(val message: String, val fieldErrors: Map<String, String> = emptyMap())
+data class InputError(val message: String)

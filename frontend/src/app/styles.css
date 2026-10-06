@@ -1,0 +1,28 @@
+:root { font-family: system-ui, sans-serif; color: #222; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+.startup-message { padding: 1rem; }
+button, input { font: inherit; }
+button { padding: .65rem 1rem; cursor: pointer; }
+button:disabled { cursor: wait; }
+.app, .map-canvas { width: 100%; height: 100vh; height: 100dvh; }
+.map-action {
+  position: absolute;
+  top: calc(1rem + env(safe-area-inset-top));
+  left: calc(1rem + env(safe-area-inset-left));
+}
+.map-action p { margin: 0; padding: .65rem 1rem; background: white; }
+dialog {
+  width: min(22rem, calc(100vw - 2rem));
+  max-height: calc(100dvh - 2rem);
+  overflow: auto;
+  padding: 1.5rem;
+  border: 1px solid #888;
+  border-radius: .5rem;
+}
+dialog::backdrop { background: rgb(0 0 0 / 35%); }
+h1 { margin: 0 0 1rem; font-size: 1.25rem; }
+label { display: block; margin-bottom: .5rem; }
+input { width: 100%; padding: .65rem; }
+.actions { display: flex; justify-content: flex-end; gap: .5rem; margin-top: 1rem; }
+.error { color: #a32c29; }

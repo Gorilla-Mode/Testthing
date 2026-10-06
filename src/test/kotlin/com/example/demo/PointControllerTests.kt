@@ -1,7 +1,9 @@
 package com.example.demo
 
+import com.example.demo.points.Coordinate
+import com.example.demo.points.CreatePointRequest
+import com.example.demo.points.MapPageViewModel
 import com.example.demo.points.PointService
-import org.hamcrest.Matchers.containsString
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
@@ -12,16 +14,16 @@ import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.content
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers.header
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import tools.jackson.databind.ObjectMapper
 import java.util.UUID
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
-@SpringBootTest(properties = ["app.frontend.dev=true"])
+@SpringBootTest
 @AutoConfigureMockMvc
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class PointControllerTests {
@@ -29,88 +31,120 @@ class PointControllerTests {
     @Autowired lateinit var mapper: ObjectMapper
     @Autowired lateinit var service: PointService
 
-    private fun create(name: String = "Observation point") = mockMvc.perform(post("/web/points")
-        .contentType(MediaType.APPLICATION_JSON)
-        .content(mapper.writeValueAsString(mapOf("name" to name,
-            "coordinate" to mapOf("latitude" to 60.4055, "longitude" to 5.3435)))))
+    private fun create(name: String = "Observation point", latitude: Double = 60.4055, longitude: Double = 5.3435) =
+        mockMvc.perform(post("/web/points").contentType(MediaType.APPLICATION_JSON)
+            .content(mapper.writeValueAsString(CreatePointRequest(name, Coordinate(latitude, longitude)))))
 
     @Test
-    fun `initial page embeds server configuration and empty points`() {
-        mockMvc.perform(get("/"))
+    fun `initial map model round trips through JSON`() {
+        val data = mockMvc.perform(get("/web/map"))
             .andExpect(status().isOk)
-            .andExpect(content().contentTypeCompatibleWith(MediaType.TEXT_HTML))
-            .andExpect(content().string(containsString("id=\"app-data\" type=\"application/json\"")))
-            .andExpect(content().string(containsString("\"points\":[]")))
-            .andExpect(content().string(containsString("http://localhost:5173/src/main.tsx")))
-        mockMvc.perform(get("/web/map"))
-            .andExpect(status().isOk)
-            .andExpect(jsonPath("$.map.center.latitude").value(60.4055))
+            .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+            .andExpect(header().string("Cache-Control", "no-store"))
             .andExpect(jsonPath("$.points").isEmpty)
+            .andExpect(jsonPath("$.map.center.latitude").value(60.4055))
+            .andReturn().response.contentAsString
+        assertEquals(service.mapViewModel(), mapper.readValue(data, MapPageViewModel::class.java))
     }
 
     @Test
-    fun `creation trims name generates unique UUIDs and preserves coordinates across requests`() {
-        val first = create("  Observation point  ")
+    fun `creation returns canonical JSON with server UUID and preserves coordinates`() {
+        create("  Observation point  ")
             .andExpect(status().isCreated)
+            .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+            .andExpect(header().string("Cache-Control", "no-store"))
             .andExpect(jsonPath("$.name").value("Observation point"))
             .andExpect(jsonPath("$.coordinate.latitude").value(60.4055))
             .andExpect(jsonPath("$.coordinate.longitude").value(5.3435))
-            .andExpect(jsonPath("$.coordinateLabel").value("60.40550, 5.34350"))
-            .andReturn().response.contentAsString
-        val firstId = mapper.readValue(first, Map::class.java)["id"] as String
-        assertEquals(firstId, UUID.fromString(firstId).toString())
-        val second = create().andExpect(status().isCreated).andReturn().response.contentAsString
-        assertNotEquals(firstId, mapper.readValue(second, Map::class.java)["id"])
+        val first = service.mapViewModel().points.single()
+        assertEquals(first.id, UUID.fromString(first.id).toString())
+        create().andExpect(status().isCreated)
+        assertNotEquals(first.id, service.mapViewModel().points.last().id)
         mockMvc.perform(get("/web/map"))
             .andExpect(jsonPath("$.points.length()").value(2))
-            .andExpect(jsonPath("$.points[0].id").value(firstId))
-        mockMvc.perform(get("/"))
-            .andExpect(content().string(containsString(firstId)))
+            .andExpect(jsonPath("$.points[0].id").value(first.id))
     }
 
     @Test
-    fun `invalid input returns field errors without storing anything`() {
-        mockMvc.perform(post("/web/points").contentType(MediaType.APPLICATION_JSON)
-            .content("""{"name":"  ","coordinate":{"latitude":91,"longitude":181}}"""))
-            .andExpect(status().isBadRequest)
-            .andExpect(jsonPath("$.fieldErrors.name").exists())
-            .andExpect(jsonPath("$.fieldErrors['coordinate.latitude']").exists())
-            .andExpect(jsonPath("$.fieldErrors['coordinate.longitude']").exists())
+    fun `invalid values return one message without saving`() {
+        create("  ").andExpect(status().isBadRequest)
+            .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+            .andExpect(header().string("Cache-Control", "no-store"))
+            .andExpect(jsonPath("$.message").value("Enter a name."))
+            .andExpect(jsonPath("$.fieldErrors").doesNotExist())
+        for (latitude in listOf(-91.0, 91.0)) {
+            create(latitude = latitude).andExpect(status().isBadRequest)
+                .andExpect(jsonPath("$.message").value("Latitude must be a number between -90 and 90."))
+        }
+        for (longitude in listOf(-181.0, 181.0)) {
+            create(longitude = longitude).andExpect(status().isBadRequest)
+                .andExpect(jsonPath("$.message").value("Longitude must be a number between -180 and 180."))
+        }
         assertTrue(service.mapViewModel().points.isEmpty())
     }
 
     @Test
-    fun `long names and missing coordinates are rejected`() {
+    fun `required fields cannot be omitted or null`() {
+        for (body in listOf("{}", """{"name":null,"coordinate":null}""", """{"coordinate":{}}""",
+            """{"name":"Test"}""", """{"name":"Test","coordinate":null}""",
+            """{"coordinate":{"latitude":60,"longitude":5}}""",
+            """{"name":null,"coordinate":{"latitude":60,"longitude":5}}""",
+            """{"name":"Test","coordinate":{"latitude":null,"longitude":5}}""",
+            """{"name":"Test","coordinate":{"latitude":60,"longitude":null}}""",
+            """{"name":"Test","coordinate":{"latitude":60}}""",
+            """{"name":"Test","coordinate":{"longitude":5}}""")) {
+            mockMvc.perform(post("/web/points").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest)
+                .andExpect(jsonPath("$.message").value("The request must contain a name and numeric coordinates."))
+        }
+        assertTrue(service.mapViewModel().points.isEmpty())
+    }
+
+    @Test
+    fun `long names are rejected`() {
         create("x".repeat(101)).andExpect(status().isBadRequest)
-        mockMvc.perform(post("/web/points").contentType(MediaType.APPLICATION_JSON)
-            .content("""{"name":"Test"}"""))
-            .andExpect(status().isBadRequest)
-            .andExpect(jsonPath("$.fieldErrors['coordinate.latitude']").exists())
+            .andExpect(jsonPath("$.message").value("Use 100 characters or fewer."))
         assertTrue(service.mapViewModel().points.isEmpty())
     }
 
     @Test
-    fun `malformed JSON and nonnumeric coordinates return a useful error`() {
-        listOf("{broken", """{"name":"Test","coordinate":{"latitude":"invalid","longitude":5}}""")
-            .forEach { body ->
-                mockMvc.perform(post("/web/points").contentType(MediaType.APPLICATION_JSON).content(body))
-                    .andExpect(status().isBadRequest)
-                    .andExpect(jsonPath("$.message").exists())
-            }
+    fun `malformed JSON wrong types and empty bodies produce the error contract`() {
+        for (body in listOf("{broken", "", """{"name":"Test","coordinate":{"latitude":"invalid","longitude":5}}""",
+            """{"name":"Test","coordinate":[]} """)) {
+            mockMvc.perform(post("/web/points").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest)
+                .andExpect(jsonPath("$.message").exists())
+                .andExpect(jsonPath("$.fieldErrors").doesNotExist())
+        }
         assertTrue(service.mapViewModel().points.isEmpty())
     }
 
     @Test
-    fun `names cannot terminate the bootstrap script and survive JSON round trip`() {
-        val name = "</script><script>alert('hello')</script><!-- APP_ASSETS -->&"
-        create(name).andExpect(status().isCreated)
-        val html = mockMvc.perform(get("/")).andReturn().response.contentAsString
-        assertFalse(html.contains(name))
-        assertFalse(html.contains("<script>alert("))
-        assertTrue(html.contains("\\u003c/script\\u003e"))
-        val bootstrap = html.substringAfter("<script id=\"app-data\" type=\"application/json\">")
-            .substringBefore("</script>")
-        val model = mapper.readValue(bootstrap, com.example.demo.points.MapPageViewModel::class.java)
+    fun `form submissions are rejected`() {
+        mockMvc.perform(post("/web/points").contentType(MediaType.APPLICATION_FORM_URLENCODED)
+            .param("name", "Test").param("latitude", "60").param("longitude", "5"))
+            .andExpect(status().isUnsupportedMediaType)
+        assertTrue(service.mapViewModel().points.isEmpty())
+    }
+
+    @Test
+    fun `coordinate bounds are accepted through JSON`() {
+        create("South", -90.0, -180.0).andExpect(status().isCreated)
+        create("North", 90.0, 180.0).andExpect(status().isCreated)
+        assertEquals(2, service.mapViewModel().points.size)
+    }
+
+    @Test
+    fun `names containing HTML round trip through JSON`() {
+        val name = "</script><script>alert(1)</script><b>Point</b>&"
+        create(name).andExpect(status().isCreated).andExpect(jsonPath("$.name").value(name))
+        val data = mockMvc.perform(get("/web/map"))
+            .andExpect(status().isOk)
+            .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+            .andExpect(jsonPath("$.points[0].name").value(name))
+            .andReturn().response.contentAsString
+        val model = mapper.readValue(data, MapPageViewModel::class.java)
         assertEquals(name, model.points.single().name)
+        assertEquals(service.mapViewModel(), model)
     }
 }

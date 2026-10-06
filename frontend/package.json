@@ -4,10 +4,17 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "generate:models": "../gradlew -p .. generateTypeScript -PfrontendDev",
+    "predev": "npm run generate:models",
     "dev": "vite --host localhost --port 5173 --strictPort",
+    "precheck": "npm run generate:models",
     "check": "tsc --noEmit",
-    "build": "npm run check && vite build",
+    "prebuild": "npm run generate:models",
+    "build": "npm run build:assets",
+    "build:assets": "tsc --noEmit && vite build",
+    "pretest": "npm run generate:models",
     "test": "vitest run",
+    "pretest:e2e": "npm run generate:models",
     "test:e2e": "playwright test"
   },
   "dependencies": {
@@ -20,7 +27,6 @@
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.0",
     "@testing-library/user-event": "^14.6.1",
-    "@types/geojson": "^7946.0.16",
     "@types/node": "^24.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",

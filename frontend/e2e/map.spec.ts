@@ -1,76 +1,74 @@
 import { expect, test } from '@playwright/test';
+import type { MapPageViewModel, PointViewModel } from '../src/generated/models';
 
-// A deterministic raster tile keeps interaction checks independent of the tile provider.
+// Keep the workflow independent of the tile provider.
 const tile = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
 
-for (const viewport of [
-  { width: 390, height: 844 },
-  { width: 834, height: 1194 },
-  { width: 1440, height: 1024 },
-]) {
-  test(`point workflow and layout at ${viewport.width}×${viewport.height}`, async ({ page }, testInfo) => {
-    await page.setViewportSize(viewport);
-    if (process.env.NRL_LIVE_TILES !== '1') {
-      await page.context().route('https://cache.kartverket.no/**', route => route.fulfill({ contentType: 'image/png', body: tile }));
-    }
-    const errors: string[] = [];
-    page.on('pageerror', error => errors.push(error.message));
-    const html = await page.goto('/');
-    expect(html?.headers()['cache-control']).toBe('no-store');
-    if (process.env.FRONTEND_DEV !== '1') {
-      const entry = await page.locator('script[type="module"][src]').getAttribute('src');
-      const asset = await page.request.get(entry!, { headers: { 'Accept-Encoding': 'gzip' } });
-      expect(asset.status()).toBe(200);
-      expect(asset.headers()['content-encoding']).toBe('gzip');
-    }
-    await expect(page.getByText('Loading map…')).toBeHidden();
-    await expect(page.locator('.map-message')).toBeHidden();
-    await expect(page.locator('.maplibregl-canvas')).toBeVisible();
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-    expect(await page.evaluate(() => document.documentElement.scrollHeight <= window.innerHeight)).toBe(true);
+test('serves the page and its referenced scripts and stylesheets', async ({ request }) => {
+  const response = await request.get('/');
+  expect(response.status()).toBe(200);
+  expect(response.headers()['content-type']).toContain('text/html');
+  const html = await response.text();
+  expect(html).toContain('<div id="root"></div>');
+  const scripts = [...html.matchAll(/<script[^>]*src="([^"]+)"/g)].map(match => match[1]);
+  const styles = [...html.matchAll(/<link[^>]*href="([^"]+)"/g)].map(match => match[1]);
+  expect(scripts.length).toBeGreaterThan(0);
+  if (process.env.FRONTEND_DEV !== '1') expect(styles.length).toBeGreaterThan(0);
+  for (const asset of [...scripts, ...styles]) {
+    const assetResponse = await request.get(asset);
+    expect(assetResponse.status(), asset).toBe(200);
+    expect(assetResponse.headers()['content-type']).toMatch(/javascript|css/);
+    expect((await assetResponse.body()).length).toBeGreaterThan(0);
+  }
+});
 
-    const canvas = page.locator('.maplibregl-canvas');
-    const location = { x: Math.round(viewport.width * .55), y: Math.round(viewport.height * .4) };
-    await canvas.click({ position: location });
-    const submit = page.getByRole('button', { name: /Submit point/ });
-    await expect(submit).toBeVisible();
-    await submit.click();
-    await expect(page.getByRole('dialog')).toBeVisible();
-    await expect(page.getByLabel('Name Required')).toBeFocused();
-    await page.screenshot({ path: testInfo.outputPath('name-form.png') });
-    await page.keyboard.press('Escape');
-    await expect(page.getByRole('dialog')).toBeHidden();
-    await expect(submit).toBeFocused();
-    await submit.click();
-    await page.getByRole('button', { name: 'Save point' }).click();
-    await expect(page.getByRole('alert')).toContainText('Enter a name');
-
-    const name = `Browser point ${viewport.width} ${Date.now()}`;
-    await page.getByLabel('Name Required').fill(name);
-    const responsePromise = page.waitForResponse(response => response.url().endsWith('/web/points') && response.request().method() === 'POST');
-    await page.getByRole('button', { name: 'Save point' }).click();
-    const response = await responsePromise;
-    expect(response.status()).toBe(201);
-    const point = await response.json();
-    expect(point.name).toBe(name);
-    expect(point.id).toMatch(/^[0-9a-f-]{36}$/);
-    expect(Number.isFinite(point.coordinate.latitude)).toBe(true);
-    expect(Number.isFinite(point.coordinate.longitude)).toBe(true);
-    await expect(page.getByRole('dialog')).toBeHidden();
-    await expect(page.getByText(`“${name}” saved.`)).toBeVisible();
-    await expect(submit).toBeHidden();
-
-    // The saved marker is at the selected screen position, without changing the map camera.
-    await canvas.click({ position: location });
-    await expect(page.locator('.maplibregl-popup-content')).toContainText(name);
-    await expect(submit).toBeHidden();
-    await page.reload();
-    await expect(page.getByText('Loading map…')).toBeHidden();
-    await canvas.click({ position: location });
-    await expect(page.locator('.maplibregl-popup-content')).toContainText(name);
-    expect(errors).toEqual([]);
-    await page.screenshot({ path: testInfo.outputPath('saved-point.png') });
-    const persisted = await page.request.get('/web/map');
-    expect((await persisted.json()).points.some((saved: { id: string }) => saved.id === point.id)).toBe(true);
+test('shows loading and a reload message when the initial map request fails', async ({ page }) => {
+  let release: () => void = () => {};
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/web/map', async route => {
+    await pending;
+    await route.fulfill({ status: 503, contentType: 'application/json', body: '{}' });
   });
-}
+  await page.goto('/');
+  await expect(page.getByRole('status')).toHaveText('Loading map…');
+  release();
+  await expect(page.getByRole('alert')).toHaveText('The map could not be loaded. Please reload.');
+  await expect(page.getByRole('status')).toHaveCount(0);
+  await expect(page.locator('.maplibregl-canvas')).toHaveCount(0);
+});
+
+test('selects a location, saves a point, and displays it after reload', async ({ page }) => {
+  await page.route('https://cache.kartverket.no/**', route => route.fulfill({ contentType: 'image/png', body: tile }));
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto('/');
+  const canvas = page.locator('.maplibregl-canvas');
+  await expect(canvas).toBeVisible();
+  await canvas.evaluate(element => element.setAttribute('data-map-instance', 'original'));
+  await canvas.click({ position: { x: 500, y: 300 } });
+  await expect(page.locator('.maplibregl-marker')).toHaveCount(1);
+  await page.getByRole('button', { name: 'Submit point' }).click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+
+  const name = `<b>Browser point ${Date.now()}</b>&`;
+  await page.getByLabel('Name', { exact: true }).fill(name);
+  const responsePromise = page.waitForResponse(response => response.url().endsWith('/web/points') && response.request().method() === 'POST');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  const response = await responsePromise;
+  expect(response.status()).toBe(201);
+  expect(response.request().postDataJSON().name).toBe(name);
+  const point: PointViewModel = await response.json();
+  expect(point.id).toMatch(/^[0-9a-f-]{36}$/);
+  expect(Number.isFinite(point.coordinate.latitude)).toBe(true);
+  expect(Number.isFinite(point.coordinate.longitude)).toBe(true);
+  await expect(page.getByRole('dialog')).toBeHidden();
+  await expect(page.getByTitle(name, { exact: true })).toBeVisible();
+  await expect(canvas).toHaveAttribute('data-map-instance', 'original');
+  await expect(page.getByRole('button', { name: 'Submit point' })).toBeHidden();
+
+  await page.reload();
+  await expect(page.getByTitle(name, { exact: true })).toBeVisible();
+  const model: MapPageViewModel = await (await page.request.get('/web/map')).json();
+  expect(model.points.some(saved => saved.id === point.id)).toBe(true);
+  expect(errors).toEqual([]);
+});

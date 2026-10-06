@@ -1,8 +1,13 @@
+import cz.habarta.typescript.generator.JsonLibrary
+import cz.habarta.typescript.generator.TypeScriptFileType
+import cz.habarta.typescript.generator.TypeScriptOutputKind
+
 plugins {
     id 'org.jetbrains.kotlin.jvm' version '2.3.21'
     id 'org.jetbrains.kotlin.plugin.spring' version '2.3.21'
     id 'org.springframework.boot' version '4.1.1'
     id 'io.spring.dependency-management' version '1.1.7'
+    id 'cz.habarta.typescript-generator' version '4.1.1'
 }
 
 group = 'com.example'
@@ -20,11 +25,9 @@ repositories {
 }
 
 dependencies {
-    implementation 'org.springframework.boot:spring-boot-starter-validation'
     implementation 'org.springframework.boot:spring-boot-starter-webmvc'
     implementation 'org.jetbrains.kotlin:kotlin-reflect'
     implementation 'tools.jackson.module:jackson-module-kotlin'
-    testImplementation 'org.springframework.boot:spring-boot-starter-validation-test'
     testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
     testImplementation 'org.jetbrains.kotlin:kotlin-test-junit5'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
@@ -43,6 +46,39 @@ tasks.named('test') {
 def frontendDev = providers.gradleProperty('frontendDev').isPresent()
 def frontendDirectory = layout.projectDirectory.dir('frontend')
 
+generateTypeScript {
+    jsonLibrary = JsonLibrary.jackson3
+    jackson3ModuleDiscovery = true
+    outputKind = TypeScriptOutputKind.module
+    outputFileType = TypeScriptFileType.implementationFile
+    outputFile = frontendDirectory.file('src/generated/models.ts').asFile.absolutePath
+    classes = [
+            'com.example.demo.points.MapPageViewModel',
+            'com.example.demo.points.CreatePointRequest',
+            'com.example.demo.points.InputError',
+    ]
+    sortDeclarations = true
+    sortTypeDeclarations = true
+    noFileComment = true
+    noTslintDisable = true
+    noEslintDisable = true
+}
+
+tasks.named('generateTypeScript') {
+    // Avoid classes -> processResources -> frontendBuild -> generation -> classes.
+    setDependsOn([tasks.named('compileKotlin')])
+    classpath.setFrom(tasks.named('compileKotlin').flatMap { it.destinationDirectory }, configurations.runtimeClasspath)
+    doLast {
+        def generatedFile = frontendDirectory.file('src/generated/models.ts').asFile
+        generatedFile.text = '// Generated from Kotlin web models. Do not edit.\n' + generatedFile.text
+    }
+}
+
+tasks.named('clean') {
+    delete frontendDirectory.dir('src/generated')
+    delete frontendDirectory.dir('dist')
+}
+
 tasks.register('frontendInstall', Exec) {
     workingDir frontendDirectory
     commandLine 'npm', 'ci', '--no-audit', '--no-fund'
@@ -51,19 +87,19 @@ tasks.register('frontendInstall', Exec) {
 }
 
 tasks.register('frontendBuild', Exec) {
-    dependsOn 'frontendInstall'
+    dependsOn 'frontendInstall', 'generateTypeScript'
     workingDir frontendDirectory
-    commandLine 'npm', 'run', 'build'
+    // Models were generated above; do not invoke another Gradle process from npm.
+    commandLine 'npm', 'run', 'build:assets'
     inputs.files(fileTree('frontend/src'), frontendDirectory.file('package.json'),
             frontendDirectory.file('package-lock.json'), frontendDirectory.file('vite.config.ts'),
-            frontendDirectory.file('tsconfig.json'))
+            frontendDirectory.file('tsconfig.json'), frontendDirectory.file('index.html'))
     outputs.dir(frontendDirectory.dir('dist'))
 }
 
 tasks.register('frontendResources', Sync) {
     dependsOn 'frontendBuild'
-    from(frontendDirectory.dir('dist/assets')) { into 'static/assets' }
-    from(frontendDirectory.file('dist/.vite/manifest.json')) { into 'web' }
+    from(frontendDirectory.dir('dist')) { into 'static' }
     into layout.buildDirectory.dir('generated/frontend')
 }
 
@@ -75,7 +111,5 @@ tasks.named('processResources') {
 }
 
 tasks.named('bootRun') {
-    if (frontendDev) {
-        systemProperty 'app.frontend.dev', 'true'
-    }
+    dependsOn 'generateTypeScript'
 }
