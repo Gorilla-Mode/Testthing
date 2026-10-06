@@ -13,11 +13,14 @@
     <p class="greeting" th:text="${greeting.message}">Welcome!</p>
     <p>Enter your name to get a personal greeting.</p>
 
-    <form method="get" action="/" th:action="@{/}" th:object="${greeting}">
+    <form th:method="get" th:action="@{/}" th:object="${greeting}">
         <label for="name">Your name</label>
         <input type="text" id="name" name="name" th:field="*{name}"
                placeholder="e.g. Alex" autocomplete="given-name">
-        <button type="submit">Say hello</button>
+        <button th:type="submit">Say hello</button>
+    </form>
+    <form th:method="get"  th:action="@{/loggedin}">
+        <button th:type="submit">Login</button>
     </form>
 </main>
 </body>

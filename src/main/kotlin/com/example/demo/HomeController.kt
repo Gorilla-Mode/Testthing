@@ -11,6 +11,13 @@ class HomeController {
     @GetMapping("/")
     fun index(@RequestParam(defaultValue = "") name: String, model: Model): String {
         model.addAttribute("greeting", GreetingViewModel(name.trim()))
+
         return "index"
+    }
+
+    @GetMapping("/loggedin")
+    fun loggedin(): String {
+
+        return "loggedin"
     }
 }
